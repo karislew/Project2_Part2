@@ -22,100 +22,152 @@ MenuItem BENSCHILLIBOWLMenu[] = {
     "BensVeggieBurger",
     "BensOnionRings",
 };
+
 int BENSCHILLIBOWLMenuLength = 10;
 
-/* Select a random item from the Menu and return it */
+/* Selects and returns a random menu item */
 MenuItem PickRandomMenuItem() {
-    int index= rand() % BENSCHILLIBOWLMenuLength;
+    int index = rand() % BENSCHILLIBOWLMenuLength;
     return BENSCHILLIBOWLMenu[index];
 }
 
-/* Allocate memory for the Restaurant, then create the mutex and condition variables needed to instantiate the Restaurant */
-
+/* Allocates and initializes a restaurant structure with mutexes and condition variables */
 BENSCHILLIBOWL* OpenRestaurant(int max_size, int expected_num_orders) {
-    BENSCHILLIBOWL* bcb = malloc(sizeof(BENSCHILLIBOWL));
-    bcb -> max_size = max_size;
-    bcb -> expected_num_orders = expected_num_orders;
-    bcb -> orders = NULL;
-    bcb -> current_size = 0;
-    bcb-> orders_handled = 0;
-    bcb-> next_order_number = 1;
 
-    pthread_mutex_init(&bcb->mutex,NULL);
-    pthread_cond_init(&bcb->can_add_orders,NULL);
-    pthread_cond_init(&bcb->can_get_orders,NULL);
+    // Allocate memory for the restaurant
+    BENSCHILLIBOWL* bcb = malloc(sizeof(BENSCHILLIBOWL));
+
+    // Store queue size limits and expected order count
+    bcb->max_size = max_size;
+    bcb->expected_num_orders = expected_num_orders;
+
+    // Initialize queue to empty
+    bcb->orders = NULL;
+    bcb->current_size = 0;
+
+    // Track processed orders and next order number
+    bcb->orders_handled = 0;
+    bcb->next_order_number = 1;
+
+    // Initialize mutex and condition variables
+    pthread_mutex_init(&bcb->mutex, NULL);
+    pthread_cond_init(&bcb->can_add_orders, NULL);
+    pthread_cond_init(&bcb->can_get_orders, NULL);
 
     printf("Restaurant is open!\n");
     return bcb;
 }
 
-
-/* check that the number of orders received is equal to the number handled (ie.fullfilled). Remember to deallocate your resources */
-
+/* Closes the restaurant and ensures all expected orders were processed */
 void CloseRestaurant(BENSCHILLIBOWL* bcb) {
+
+    // Destroy mutex and condition variables
     pthread_mutex_destroy(&bcb->mutex);
     pthread_cond_destroy(&bcb->can_add_orders);
     pthread_cond_destroy(&bcb->can_get_orders);
 
+    // Ensure all orders were handled before shutdown
     assert(bcb->orders_handled == bcb->expected_num_orders);
 
+    // Free restaurant memory
     free(bcb);
+
     printf("Restaurant is closed!\n");
 }
 
-/* add an order to the back of queue */
+/* Adds an order to the queue and returns the assigned order number */
 int AddOrder(BENSCHILLIBOWL* bcb, Order* order) {
+
+    // Lock the shared structure
     pthread_mutex_lock(&bcb->mutex);
-    while(IsFull(bcb)){
-        pthread_cond_wait(&bcb->can_add_orders,&bcb->mutex);
+
+    // Wait until space is available in the queue
+    while (IsFull(bcb)) {
+        pthread_cond_wait(&bcb->can_add_orders, &bcb->mutex);
     }
-    order->next  = NULL;
-    AddOrderToBack(&bcb->orders,order);
+
+    // Assign a unique order number safely inside the critical section
+    order->order_number = bcb->next_order_number++;
+    
+    // Order will be added at the end of the queue
+    order->next = NULL;
+
+    // Insert order at back of queue
+    AddOrderToBack(&bcb->orders, order);
+
+    // Update queue size
     bcb->current_size++;
 
+    // Signal cooks that an order is available
     pthread_cond_signal(&bcb->can_get_orders);
+
+    // Unlock the shared structure
     pthread_mutex_unlock(&bcb->mutex);
-    return -1;
+
+    // Return the assigned order number
+    return order->order_number;
 }
 
-/* remove an order from the queue */
+/* Removes and returns the next order from the queue */
 Order *GetOrder(BENSCHILLIBOWL* bcb) {
+
+    // Lock the restaurant structure
     pthread_mutex_lock(&bcb->mutex);
-    while(IsEmpty){
-        if(bcb->orders_handled >= bcb->expected_num_orders){
+
+    // Wait while the queue is empty
+    while (IsEmpty(bcb)) {
+
+        // If all expected orders have been handled, stop taking orders
+        if (bcb->orders_handled >= bcb->expected_num_orders) {
             pthread_mutex_unlock(&bcb->mutex);
             return NULL;
         }
-        pthread_cond_wait(&bcb->can_get_orders,&bcb->mutex);
+
+        // Otherwise wait for new orders to be added
+        pthread_cond_wait(&bcb->can_get_orders, &bcb->mutex);
     }
+
+    // Remove first order from the queue
     Order* order = bcb->orders;
     bcb->orders = order->next;
+
+    // Update size and handled count
     bcb->current_size--;
     bcb->orders_handled++;
+
+    // Signal customers that a slot has opened in the queue
     pthread_cond_signal(&bcb->can_add_orders);
+
+    // Unlock the structure
     pthread_mutex_unlock(&bcb->mutex);
+
     return order;
 }
 
-// Optional helper functions (you can implement if you think they would be useful)
+/* Returns true if queue is empty */
 bool IsEmpty(BENSCHILLIBOWL* bcb) {
-    return bcb->current_size ==0;
+    return bcb->current_size == 0;
 }
 
+/* Returns true if queue is full */
 bool IsFull(BENSCHILLIBOWL* bcb) {
-  return bcb->current_size >= bcb->max_size;
+    return bcb->current_size >= bcb->max_size;
 }
 
-/* this methods adds order to rear of queue */
+/* Inserts an order at the back of the linked-list queue */
 void AddOrderToBack(Order **orders, Order *order) {
-    if(*orders==NULL){
+
+    // If queue is empty, new order becomes head
+    if (*orders == NULL) {
         *orders = order;
-    }else{
+    } 
+    
+    // Otherwise find the end and attach
+    else {
         Order *curr = *orders;
-        while(curr->next!=NULL){
-            curr= curr->next;
+        while (curr->next != NULL) {
+            curr = curr->next;
         }
         curr->next = order;
     }
 }
-
